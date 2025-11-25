@@ -23,6 +23,11 @@ function App() {
   })
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true) // 侧边栏默认折叠
+  const [aiCapabilities, setAiCapabilities] = useState({ // AI能力设置
+    deepThinking: false,
+    internetSearch: true
+  })
   const messagesEndRef = useRef(null)
   const textareaRef = useRef(null)
   
@@ -100,6 +105,11 @@ function App() {
     
     setInput('')
     setIsLoading(true)
+    
+    // 确保输入框保持焦点
+    if (textareaRef.current) {
+      textareaRef.current.focus()
+    }
 
     try {
       // 构建用户消息，明确要求联网搜索
@@ -121,7 +131,7 @@ function App() {
           messages: [
             { 
               role: 'system', 
-              content: '你是Test1，一个智能AI助手。对于需要实时信息（如当前日期、新闻、天气等）的问题，请务必使用联网搜索功能获取最新信息后再回答。' 
+              content: `你是Test1，一个智能AI助手。${aiCapabilities.internetSearch ? '对于需要实时信息（如当前日期、新闻、天气等）的问题，请务必使用联网搜索功能获取最新信息后再回答。' : '请根据你的知识回答问题。'}${aiCapabilities.deepThinking ? '请对问题进行深入分析后再回答。' : ''}` 
             },
             ...messages.map(msg => ({
               role: msg.sender === 'user' ? 'user' : 'assistant',
@@ -130,7 +140,7 @@ function App() {
             userMessage
           ],
           temperature: 0.1,  // 降低温度，提高回答准确性
-          search_internet: true,  // 关键参数：开启联网搜索功能
+          search_internet: aiCapabilities.internetSearch,  // 根据用户选择配置联网搜索功能
           debug: true,  // 开启调试模式，获取详细搜索信息
           stream: false  // 关闭流式输出，获取完整响应
         },
@@ -199,11 +209,14 @@ function App() {
 
   return (
     <div className="app">
-      <div className="sidebar">
+      <div className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header">
-          <h2>会话</h2>
+          <h2>{!sidebarCollapsed && '会话'}</h2>
+          <div className="sidebar-toggle" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
+            {sidebarCollapsed ? '▶️' : '◀️'}
+          </div>
           <button className="new-session-btn" onClick={createNewSession}>
-            + 新会话
+            {sidebarCollapsed ? '+' : '+ 新会话'}
           </button>
         </div>
         
@@ -257,22 +270,27 @@ function App() {
           </div>
         </header>
         
-        <div className="chat-messages">
-          {messages.map(message => (
-            <div key={message.id} className={`message ${message.sender}`}>
-              <div className="message-content">
-                {message.text}
-              </div>
+        <div className={`chat-messages ${messages.length === 0 ? 'empty-chat' : ''}`}>
+          {messages.length === 0 ? (
+            <div className="empty-chat-message">
+              <h3>开始新的对话</h3>
+              <p>向 DeepSeek AI 提问任何问题</p>
             </div>
-          ))}
+          ) : (
+            messages.map(message => (
+              <div key={message.id} className={`message ${message.sender}`}>
+                <div className="message-content">
+                  {message.text}
+                </div>
+              </div>
+            ))
+          )}
           
           {isLoading && (
             <div className="message ai">
               <div className="message-content">
                 <div className="loading-indicator">
-                  <span></span>
-                  <span></span>
-                  <span></span>
+                  <div className="infinity-symbol"></div>
                 </div>
               </div>
             </div>
@@ -282,6 +300,22 @@ function App() {
         </div>
         
         <div className="chat-input">
+          <div className="ai-capabilities">
+            <button 
+              className={`capability-btn ${aiCapabilities.deepThinking ? 'active' : ''}`}
+              onClick={() => setAiCapabilities(prev => ({ ...prev, deepThinking: !prev.deepThinking }))}
+              disabled={isLoading}
+            >
+              深度思考（测试）
+            </button>
+            <button 
+              className={`capability-btn ${aiCapabilities.internetSearch ? 'active' : ''}`}
+              onClick={() => setAiCapabilities(prev => ({ ...prev, internetSearch: !prev.internetSearch }))}
+              disabled={isLoading}
+            >
+              联网搜索（测试）
+            </button>
+          </div>
           <textarea
             ref={textareaRef}
             value={input}
