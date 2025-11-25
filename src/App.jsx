@@ -24,6 +24,7 @@ function App() {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const messagesEndRef = useRef(null)
+  const textareaRef = useRef(null)
   
   // 获取当前会话
   const currentSession = sessions.find(session => session.id === currentSessionId)
@@ -101,19 +102,37 @@ function App() {
     setIsLoading(true)
 
     try {
+      // 构建用户消息，明确要求联网搜索
+      const userMessage = {
+        role: 'user',
+        content: input
+      };
+      
+      // 对于涉及实时信息的问题，添加明确的搜索提示
+      const requiresRealTimeInfo = /(今天|现在|当前|最新|实时|日期|时间|新闻|天气)/i.test(input);
+      if (requiresRealTimeInfo) {
+        userMessage.content += "\n\n请务必通过联网搜索获取最新信息后再回答。";
+      }
+      
       const response = await axios.post(
         'https://api.deepseek.com/v1/chat/completions',
         {
           model: 'deepseek-chat',
           messages: [
-            { role: 'system', content: '你是Test1，一个智能AI助手。' },
+            { 
+              role: 'system', 
+              content: '你是Test1，一个智能AI助手。对于需要实时信息（如当前日期、新闻、天气等）的问题，请务必使用联网搜索功能获取最新信息后再回答。' 
+            },
             ...messages.map(msg => ({
               role: msg.sender === 'user' ? 'user' : 'assistant',
               content: msg.text
             })),
-            { role: 'user', content: input }
+            userMessage
           ],
-          temperature: 0.7
+          temperature: 0.1,  // 降低温度，提高回答准确性
+          search_internet: true,  // 关键参数：开启联网搜索功能
+          debug: true,  // 开启调试模式，获取详细搜索信息
+          stream: false  // 关闭流式输出，获取完整响应
         },
         {
           headers: {
@@ -122,6 +141,9 @@ function App() {
           }
         }
       )
+      
+      // 输出调试信息
+      console.log('DeepSeek API 响应:', response.data)
 
       const aiMessage = {
         id: Date.now() + 1,
@@ -159,6 +181,21 @@ function App() {
       handleSend()
     }
   }
+
+  // 自动调整textarea高度
+  const autoResizeTextarea = () => {
+    if (textareaRef.current) {
+      // 重置高度以获取准确的scrollHeight
+      textareaRef.current.style.height = 'auto'
+      // 设置新高度
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
+    }
+  }
+
+  // 监听输入变化，自动调整高度
+  useEffect(() => {
+    autoResizeTextarea()
+  }, [input])
 
   return (
     <div className="app">
@@ -246,6 +283,7 @@ function App() {
         
         <div className="chat-input">
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={(e) => {
@@ -257,6 +295,7 @@ function App() {
             placeholder="输入您的问题..."
             disabled={isLoading}
             rows={1}
+            style={{ resize: 'none', overflow: 'hidden' }}
           />
           <button onClick={handleSend} disabled={isLoading}>
             发送
