@@ -24,14 +24,15 @@ npm run build
 
 构建完成后，会在项目根目录下生成 `dist` 文件夹。
 
-## 部署到 Gitee Pages
+## 部署到 GitHub Pages
 
 1. 确保项目根目录下有 `dist` 目录（执行 `npm run build` 生成）
-2. 在 Gitee 上创建一个新仓库
-3. 将项目推送到 Gitee 仓库
-4. 进入仓库设置，启用 Gitee Pages 功能
-5. 选择 `dist` 目录作为部署目录
-6. 点击 "更新" 按钮完成部署
+2. 在 GitHub 上创建一个新仓库
+3. 将项目推送到 GitHub 仓库
+4. 进入仓库设置，找到 "Pages" 选项
+5. 在 "Build and deployment" 部分，选择 "Deploy from a branch"
+6. 选择 `main` 分支，然后选择 `/dist` 目录
+7. 点击 "Save" 按钮，GitHub Pages 将自动部署项目
 
 ## 项目结构
 

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import axios from 'axios'
 import './App.css'
+import { MemorySystem, SelfLearningAPI } from './MemorySystem'
 
 function App() {
   // 从localStorage加载会话数据
@@ -26,8 +27,12 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true) // 侧边栏默认折叠
   const [aiCapabilities, setAiCapabilities] = useState({ // AI能力设置
     deepThinking: false,
-    internetSearch: true
+    internetSearch: false
   })
+  
+  // 创建对话记忆系统和自我学习API实例
+  const memorySystemRef = useRef(new MemorySystem())
+  const selfLearningAPIRef = useRef(new SelfLearningAPI(axios, memorySystemRef.current))
   const messagesEndRef = useRef(null)
   const textareaRef = useRef(null)
   
@@ -112,34 +117,62 @@ function App() {
     }
 
     try {
+      // 从记忆系统获取相关的历史记录
+      const relevantMemory = memorySystemRef.current.getRelevantMemory(input);
+      
       // 构建用户消息，明确要求联网搜索
-      const userMessage = {
-        role: 'user',
-        content: input
-      };
+      let userMessageContent = input;
       
       // 对于涉及实时信息的问题，添加明确的搜索提示
       const requiresRealTimeInfo = /(今天|现在|当前|最新|实时|日期|时间|新闻|天气)/i.test(input);
       if (requiresRealTimeInfo) {
-        userMessage.content += "\n\n请务必通过联网搜索获取最新信息后再回答。";
+        userMessageContent += "\n\n请务必通过联网搜索获取最新信息后再回答。";
       }
+      
+      // 如果启用深度思考，使用深度思考提示
+      if (aiCapabilities.deepThinking) {
+        userMessageContent = `请深入思考并逐步分析：${userMessageContent}`;
+      }
+      
+      const userMessage = {
+        role: 'user',
+        content: userMessageContent
+      };
+      
+      // 构建API调用的messages数组
+      const apiMessages = [
+        { 
+          role: 'system', 
+          content: `你是Test1，一个智能AI助手。${aiCapabilities.internetSearch ? '对于需要实时信息（如当前日期、新闻、天气等）的问题，请务必使用联网搜索功能获取最新信息后再回答。' : '请根据你的知识回答问题。'}${aiCapabilities.deepThinking ? '请对问题进行深入分析后再回答。' : ''}` 
+        }
+      ];
+      
+      // 添加相关记忆作为上下文
+      if (relevantMemory.length > 0) {
+        apiMessages.push({
+          role: 'system',
+          content: `以下是一些相关的历史对话，可能有助于回答当前问题：\n\n${relevantMemory.map(memory => 
+            `用户：${memory.question}\n助手：${memory.answer}`
+          ).join('\n\n')}\n\n请参考这些历史对话，但不要直接重复之前的回答，除非完全相关。`
+        });
+      }
+      
+      // 添加当前会话的历史消息
+      apiMessages.push(...messages.map(msg => ({
+        role: msg.sender === 'user' ? 'user' : 'assistant',
+        content: msg.text
+      })));
+      
+      // 添加当前用户消息
+      apiMessages.push(userMessage);
       
       const response = await axios.post(
         'https://api.deepseek.com/v1/chat/completions',
         {
           model: 'deepseek-chat',
-          messages: [
-            { 
-              role: 'system', 
-              content: `你是Test1，一个智能AI助手。${aiCapabilities.internetSearch ? '对于需要实时信息（如当前日期、新闻、天气等）的问题，请务必使用联网搜索功能获取最新信息后再回答。' : '请根据你的知识回答问题。'}${aiCapabilities.deepThinking ? '请对问题进行深入分析后再回答。' : ''}` 
-            },
-            ...messages.map(msg => ({
-              role: msg.sender === 'user' ? 'user' : 'assistant',
-              content: msg.text
-            })),
-            userMessage
-          ],
-          temperature: 0.1,  // 降低温度，提高回答准确性
+          messages: apiMessages,
+          temperature: aiCapabilities.deepThinking ? 0.3 : 0.1,  // 启用深度思考时提高温度，促进思考
+          max_tokens: 3000,  // 增加token限制以支持更详细的回答
           search_internet: aiCapabilities.internetSearch,  // 根据用户选择配置联网搜索功能
           debug: true,  // 开启调试模式，获取详细搜索信息
           stream: false  // 关闭流式输出，获取完整响应
@@ -155,9 +188,10 @@ function App() {
       // 输出调试信息
       console.log('DeepSeek API 响应:', response.data)
 
+      const aiMessageContent = response.data.choices[0].message.content;
       const aiMessage = {
         id: Date.now() + 1,
-        text: response.data.choices[0].message.content,
+        text: aiMessageContent,
         sender: 'ai'
       }
       
@@ -167,6 +201,24 @@ function App() {
           ? { ...session, messages: [...session.messages, aiMessage] } 
           : session
       ))
+      
+      // 将这次交互保存到记忆系统中
+      memorySystemRef.current.addInteraction(input, aiMessageContent);
+      
+      // 在后台进行自我反思和学习
+      if (aiCapabilities.deepThinking) {
+        selfLearningAPIRef.current.learnFromInteraction(
+          input, 
+          aiMessageContent,
+          import.meta.env.VITE_DEEPSEEK_API_KEY
+        ).then(reflection => {
+          if (reflection) {
+            console.log('自我反思结果:', reflection);
+          }
+        }).catch(error => {
+          console.error('自我反思失败:', error);
+        });
+      }
     } catch (error) {
       console.error('API请求失败:', error)
       const errorMessage = {
@@ -186,11 +238,7 @@ function App() {
     }
   }
 
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !isLoading) {
-      handleSend()
-    }
-  }
+  // 已在textarea中使用内联onKeyPress处理函数，不再需要单独的handleKeyPress函数
 
   // 自动调整textarea高度
   const autoResizeTextarea = () => {
@@ -211,16 +259,15 @@ function App() {
     <div className="app">
       <div className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header">
-          <h2>{!sidebarCollapsed && '会话'}</h2>
-          <div className="sidebar-toggle" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
-            {sidebarCollapsed ? '▶️' : '◀️'}
+          <div className="sidebar-toggle" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}>
+            {sidebarCollapsed ? '>' : '<'}
           </div>
-          <button className="new-session-btn" onClick={createNewSession}>
-            {sidebarCollapsed ? '+' : '+ 新会话'}
+          <button className="new-session-btn" onClick={createNewSession} title="开启新会话">
+            {sidebarCollapsed ? '+' : '开启新会话'}
           </button>
         </div>
         
-        <div className="sessions-list">
+        {!sidebarCollapsed && <div className="sessions-list">
           {sessions.map(session => (
             <div 
               key={session.id} 
@@ -246,19 +293,19 @@ function App() {
                   }}
                   title="重命名"
                 >
-                  ✏️
+                  R
                 </button>
                 <button 
                   className="delete-btn"
                   onClick={() => deleteSession(session.id)}
                   title="删除"
                 >
-                  🗑️
+                  D
                 </button>
               </div>
             </div>
           ))}
-        </div>
+        </div>}
       </div>
       
       <div className="chat-container">
@@ -291,6 +338,7 @@ function App() {
               <div className="message-content">
                 <div className="loading-indicator">
                   <div className="infinity-symbol"></div>
+                  {aiCapabilities.deepThinking && <div className="thinking-text">深度思考中...</div>}
                 </div>
               </div>
             </div>
@@ -315,25 +363,72 @@ function App() {
             >
               联网搜索（测试）
             </button>
+            <button 
+              className="capability-btn"
+              onClick={async () => {
+                setIsLoading(true);
+                try {
+                  // 调用Flask API
+                  const response = await axios.get('http://localhost:5000/api/data', {
+                    params: { timestamp: Date.now() }
+                  });
+                  
+                  // 创建一个系统消息显示API结果
+                  const apiMessage = {
+                    id: Date.now(),
+                    text: `Flask API 响应: ${JSON.stringify(response.data, null, 2)}`,
+                    sender: 'ai'
+                  };
+                  
+                  // 添加API响应到当前会话
+                  setSessions(prev => prev.map(session => 
+                    session.id === currentSessionId 
+                      ? { ...session, messages: [...session.messages, apiMessage] } 
+                      : session
+                  ));
+                } catch (error) {
+                  console.error('Flask API请求失败:', error);
+                  const errorMessage = {
+                    id: Date.now(),
+                    text: `Flask API请求失败: ${error.message}`,
+                    sender: 'ai'
+                  };
+                  
+                  // 添加错误消息到当前会话
+                  setSessions(prev => prev.map(session => 
+                    session.id === currentSessionId 
+                      ? { ...session, messages: [...session.messages, errorMessage] } 
+                      : session
+                  ));
+                } finally {
+                  setIsLoading(false);
+                }
+              }}
+              disabled={isLoading}
+            >
+              测试Flask API
+            </button>
           </div>
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !isLoading) {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
-            placeholder="输入您的问题..."
-            disabled={isLoading}
-            rows={1}
-            style={{ resize: 'none', overflow: 'hidden' }}
-          />
-          <button onClick={handleSend} disabled={isLoading}>
-            发送
-          </button>
+          <div className="input-row">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && !isLoading) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              placeholder="输入您的问题..."
+              disabled={isLoading}
+              rows={1}
+              style={{ resize: 'none', overflow: 'hidden' }}
+            />
+            <button onClick={handleSend} disabled={isLoading}>
+              发送
+            </button>
+          </div>
         </div>
       </div>
     </div>
